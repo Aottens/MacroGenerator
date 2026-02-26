@@ -41,7 +41,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "interface_base": 20119,
     "temp_min_real_dm": 0,
     "temp_max_real_dm": 0,
-    "pending_changes_bit": "",
+    "pending_changes_dm": 0,
     "commit_changes_bit": "",
     "rollback_changes_bit": "",
 }
@@ -64,7 +64,7 @@ class MachineSettings:
     popups: Dict[str, int] = field(default_factory=lambda: dict(DEFAULT_SETTINGS["popups"]))
     temp_min_real_dm: int = DEFAULT_SETTINGS["temp_min_real_dm"]
     temp_max_real_dm: int = DEFAULT_SETTINGS["temp_max_real_dm"]
-    pending_changes_bit: str = DEFAULT_SETTINGS["pending_changes_bit"]
+    pending_changes_dm: int = DEFAULT_SETTINGS["pending_changes_dm"]
     commit_changes_bit: str = DEFAULT_SETTINGS["commit_changes_bit"]
     rollback_changes_bit: str = DEFAULT_SETTINGS["rollback_changes_bit"]
 
@@ -76,7 +76,7 @@ class MachineSettings:
             popups=dict(data.get("popups", DEFAULT_SETTINGS["popups"])),
             temp_min_real_dm=data.get("temp_min_real_dm", DEFAULT_SETTINGS["temp_min_real_dm"]),
             temp_max_real_dm=data.get("temp_max_real_dm", DEFAULT_SETTINGS["temp_max_real_dm"]),
-            pending_changes_bit=data.get("pending_changes_bit", DEFAULT_SETTINGS["pending_changes_bit"]),
+            pending_changes_dm=int(data.get("pending_changes_dm", data.get("pending_changes_bit", DEFAULT_SETTINGS["pending_changes_dm"])) or 0),
             commit_changes_bit=data.get("commit_changes_bit", DEFAULT_SETTINGS["commit_changes_bit"]),
             rollback_changes_bit=data.get("rollback_changes_bit", DEFAULT_SETTINGS["rollback_changes_bit"]),
         )
@@ -88,7 +88,7 @@ class MachineSettings:
             "popups": dict(self.popups),
             "temp_min_real_dm": self.temp_min_real_dm,
             "temp_max_real_dm": self.temp_max_real_dm,
-            "pending_changes_bit": self.pending_changes_bit,
+            "pending_changes_dm": self.pending_changes_dm,
             "commit_changes_bit": self.commit_changes_bit,
             "rollback_changes_bit": self.rollback_changes_bit,
         }
@@ -122,8 +122,16 @@ def load_config() -> Dict[str, Any]:
         if "temp_max_real_dm" not in settings:
             settings["temp_max_real_dm"] = DEFAULT_SETTINGS["temp_max_real_dm"]
             migrated = True
-        if "pending_changes_bit" not in settings:
-            settings["pending_changes_bit"] = DEFAULT_SETTINGS["pending_changes_bit"]
+        if "pending_changes_dm" not in settings:
+            legacy_pending = settings.get("pending_changes_bit", 0)
+            try:
+                settings["pending_changes_dm"] = int(legacy_pending)
+            except Exception:
+                try:
+                    _, ptr, _ = parse_address(legacy_pending)
+                    settings["pending_changes_dm"] = ptr
+                except Exception:
+                    settings["pending_changes_dm"] = DEFAULT_SETTINGS["pending_changes_dm"]
             migrated = True
         if "commit_changes_bit" not in settings:
             settings["commit_changes_bit"] = DEFAULT_SETTINGS["commit_changes_bit"]
@@ -221,7 +229,7 @@ class MacroContext:
     popup_mapping: Dict[str, int]
     temp_min_real_dm: int
     temp_max_real_dm: int
-    pending_changes_bit: str
+    pending_changes_dm: int
     commit_changes_bit: str
     rollback_changes_bit: str
 
@@ -265,34 +273,16 @@ class MacroBuilder:
         lines[showpage_index:showpage_index] = pending_lines
 
     def _build_pending_changes_lines(self) -> List[str]:
-        pending_address = (self.context.pending_changes_bit or "").strip()
-        if not pending_address:
+        pending_dm = int(self.context.pending_changes_dm or 0)
+        if pending_dm <= 0:
             raise ValueError(
-                "Save Workflow Enabled is TRUE but machine setting 'pending_changes_bit' is empty."
+                "Save Workflow Enabled is TRUE but machine setting 'pending_changes_dm' is not configured (> 0 required)."
             )
-
-        area, pointer, bit = parse_address(pending_address)
-        if bit is None:
-            raise ValueError(
-                "Machine setting 'pending_changes_bit' must include a bit index (example: D123.0)."
-            )
-
-        if area.startswith("D"):
-            write_code = 300
-        elif area.startswith("W"):
-            write_code = 104
-        elif area.startswith("H"):
-            write_code = 101
-        else:
-            match = re.fullmatch(r"E([0-9])", area)
-            if not match:
-                raise ValueError(f"Unsupported pending_changes_bit area: {area}")
-            write_code = 302 + int(match.group(1))
 
         return [
             "'Save workflow: mark pending changes'",
-            "$B90=1; 'Set pending buffer to TRUE'",
-            f"WRITEHOSTB([{self.context.connection}],{write_code},{pointer},{bit},$B90,1); 'Set pending changes bit'",
+            "$W31=1; 'Pending changes flag'",
+            f"WRITECMEM([{self.context.connection}:DM{pending_dm}], $W31,1); 'Write pending changes flag'",
         ]
 
     def _build_bool(self, area: str, pointer: int, bit: Optional[int], code: int, description: str) -> List[str]:
@@ -501,11 +491,11 @@ class ConfigDialog(QtWidgets.QDialog):
         temp_form.addRow("REAL temp MAX (DM):", self.temp_max_real_sb)
         layout.addLayout(temp_form)
 
-        self.pending_bit_e = QtWidgets.QLineEdit()
+        self.pending_dm_e = QtWidgets.QLineEdit()
         self.commit_bit_e = QtWidgets.QLineEdit()
         self.rollback_bit_e = QtWidgets.QLineEdit()
         workflow_form = QtWidgets.QFormLayout()
-        workflow_form.addRow("Pending changes bit:", self.pending_bit_e)
+        workflow_form.addRow("Pending changes DM:", self.pending_dm_e)
         workflow_form.addRow("Commit changes bit:", self.commit_bit_e)
         workflow_form.addRow("Rollback changes bit:", self.rollback_bit_e)
         layout.addLayout(workflow_form)
@@ -534,7 +524,7 @@ class ConfigDialog(QtWidgets.QDialog):
             spin_box.setValue(settings.popups.get(key, DEFAULT_SETTINGS["popups"][key]))
         self.temp_min_real_sb.setValue(settings.temp_min_real_dm)
         self.temp_max_real_sb.setValue(settings.temp_max_real_dm)
-        self.pending_bit_e.setText(settings.pending_changes_bit)
+        self.pending_dm_e.setText(str(settings.pending_changes_dm))
         self.commit_bit_e.setText(settings.commit_changes_bit)
         self.rollback_bit_e.setText(settings.rollback_changes_bit)
 
@@ -558,7 +548,7 @@ class ConfigDialog(QtWidgets.QDialog):
             popups={key: spin_box.value() for key, spin_box in self.spin_boxes.items()},
             temp_min_real_dm=self.temp_min_real_sb.value(),
             temp_max_real_dm=self.temp_max_real_sb.value(),
-            pending_changes_bit=self.pending_bit_e.text().strip(),
+            pending_changes_dm=parse_int_like(self.pending_dm_e.text(), fallback=0),
             commit_changes_bit=self.commit_bit_e.text().strip(),
             rollback_changes_bit=self.rollback_bit_e.text().strip(),
         )
@@ -652,7 +642,7 @@ class SingleMacroDialog(QtWidgets.QDialog):
                 popup_mapping=parent.popup_mapping,
                 temp_min_real_dm=parent.temp_min_real_dm,
                 temp_max_real_dm=parent.temp_max_real_dm,
-                pending_changes_bit=parent.pending_changes_bit,
+                pending_changes_dm=parent.pending_changes_dm,
                 commit_changes_bit=parent.commit_changes_bit,
                 rollback_changes_bit=parent.rollback_changes_bit,
             )
@@ -689,7 +679,7 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
         self.popup_mapping = cfg.get("popups", DEFAULT_SETTINGS["popups"]).copy()
         self.temp_min_real_dm = cfg.get("temp_min_real_dm", DEFAULT_SETTINGS["temp_min_real_dm"])
         self.temp_max_real_dm = cfg.get("temp_max_real_dm", DEFAULT_SETTINGS["temp_max_real_dm"])
-        self.pending_changes_bit = cfg.get("pending_changes_bit", DEFAULT_SETTINGS["pending_changes_bit"])
+        self.pending_changes_dm = cfg.get("pending_changes_dm", DEFAULT_SETTINGS["pending_changes_dm"])
         self.commit_changes_bit = cfg.get("commit_changes_bit", DEFAULT_SETTINGS["commit_changes_bit"])
         self.rollback_changes_bit = cfg.get("rollback_changes_bit", DEFAULT_SETTINGS["rollback_changes_bit"])
 
@@ -727,7 +717,7 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
             popup_mapping=self.popup_mapping,
             temp_min_real_dm=self.temp_min_real_dm,
             temp_max_real_dm=self.temp_max_real_dm,
-            pending_changes_bit=self.pending_changes_bit,
+            pending_changes_dm=self.pending_changes_dm,
             commit_changes_bit=self.commit_changes_bit,
             rollback_changes_bit=self.rollback_changes_bit,
         )
@@ -742,7 +732,7 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
         self.popup_mapping = settings.popups
         self.temp_min_real_dm = settings.temp_min_real_dm
         self.temp_max_real_dm = settings.temp_max_real_dm
-        self.pending_changes_bit = settings.pending_changes_bit
+        self.pending_changes_dm = settings.pending_changes_dm
         self.commit_changes_bit = settings.commit_changes_bit
         self.rollback_changes_bit = settings.rollback_changes_bit
 
@@ -893,7 +883,7 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
             "3. Single-macro support—remains open after Generate.\n"
             "4. Use the template to get started.\n"
             "5. REAL indirect min/max → temp DM’s (configure in machine settings). INT/BCD unchanged.\n"
-            "6. Save workflow per row: set 'Save Workflow Enabled' in Excel and configure pending/commit/rollback bits per machine.\n"
+            "6. Save workflow per row: set 'Save Workflow Enabled' in Excel and configure pending changes DM per machine.\n"
         )
         QtWidgets.QMessageBox.information(self, "Help", help_txt)
 
