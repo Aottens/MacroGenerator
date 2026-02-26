@@ -238,7 +238,7 @@ class MacroBuilder:
         if datatype == "BOOL":
             lines = self._build_bool(area, pointer, bit, code, macro_input.description)
             if macro_input.save_workflow_enabled:
-                self._append_pending_changes(lines)
+                self._insert_pending_changes_before_showpage(lines)
             return lines
 
         lines = self._build_numeric(
@@ -253,10 +253,18 @@ class MacroBuilder:
             after_scale=macro_input.after_scale,
         )
         if macro_input.save_workflow_enabled:
-            self._append_pending_changes(lines)
+            self._insert_pending_changes_before_showpage(lines)
         return lines
 
-    def _append_pending_changes(self, lines: List[str]) -> None:
+    def _insert_pending_changes_before_showpage(self, lines: List[str]) -> None:
+        pending_lines = self._build_pending_changes_lines()
+        showpage_index = next((idx for idx, line in enumerate(lines) if line.startswith("SHOWPAGE(")), None)
+        if showpage_index is None:
+            lines.extend(pending_lines)
+            return
+        lines[showpage_index:showpage_index] = pending_lines
+
+    def _build_pending_changes_lines(self) -> List[str]:
         pending_address = (self.context.pending_changes_bit or "").strip()
         if not pending_address:
             raise ValueError(
@@ -281,13 +289,11 @@ class MacroBuilder:
                 raise ValueError(f"Unsupported pending_changes_bit area: {area}")
             write_code = 302 + int(match.group(1))
 
-        lines.extend(
-            [
-                "'Save workflow: mark pending changes'",
-                "$B90=1; 'Set pending buffer to TRUE'",
-                f"WRITEHOSTB([{self.context.connection}],{write_code},{pointer},{bit},$B90,1); 'Set pending changes bit'",
-            ]
-        )
+        return [
+            "'Save workflow: mark pending changes'",
+            "$B90=1; 'Set pending buffer to TRUE'",
+            f"WRITEHOSTB([{self.context.connection}],{write_code},{pointer},{bit},$B90,1); 'Set pending changes bit'",
+        ]
 
     def _build_bool(self, area: str, pointer: int, bit: Optional[int], code: int, description: str) -> List[str]:
         if area.startswith("D"):
