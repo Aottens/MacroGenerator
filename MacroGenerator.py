@@ -187,7 +187,7 @@ def area_code(area: str) -> int:
     if candidate.startswith("H"):
         return 2
 
-    match = re.fullmatch(r"E([0-3])", candidate)
+    match = re.fullmatch(r"E([0-9])", candidate)
     if match:
         return 3 + int(match.group(1))
 
@@ -276,7 +276,7 @@ class MacroBuilder:
         elif area.startswith("H"):
             write_code = 101
         else:
-            match = re.fullmatch(r"E([0-3])", area)
+            match = re.fullmatch(r"E([0-9])", area)
             if not match:
                 raise ValueError(f"Unsupported pending_changes_bit area: {area}")
             write_code = 302 + int(match.group(1))
@@ -297,7 +297,7 @@ class MacroBuilder:
         elif area.startswith("H"):
             readcode = 101
         else:
-            match = re.fullmatch(r"E([0-3])", area)
+            match = re.fullmatch(r"E([0-9])", area)
             if not match:
                 raise ValueError(f"Unsupported BOOL area: {area}")
             readcode = 302 + int(match.group(1))
@@ -313,7 +313,7 @@ class MacroBuilder:
             f"$W1 = {pointer}; 'Adres pointer voor {area}{pointer:05} instellen'",
             f"$W2 = {bit}; 'Bit index instellen voor {area}{pointer:05}.{bit}'",
             f"STRCPY($W3,\"{description}\"); 'Schrijf beschrijving naar $W3'",
-            "$W22={}; 'D=0, W=1, H=2, E0=3, E1=4, E2=5, E3=6'".format(code),
+            "$W22={}; 'D=0, W=1, H=2, E0=3 ... E9=12'".format(code),
             f"WRITECMEM([{self.context.connection}:DM{bool_block}], $W1,22); 'Kopieerslag naar PLC (incl. omschrijving)'",
             f"READHOSTB($B10,[{self.context.connection}],{readcode},{pointer},{bit},1); 'Lees bit'",
             f"WRITEHOSTB([{self.context.connection}],300,{old_bool},0,$B10,1); 'Schrijf boolean oude waarde'",
@@ -882,7 +882,7 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
         help_txt = (
             "1. Configure connection, interface base, and pop-up pages per machine.\n"
             "   BOOL uses a single generic page; area code mapping:\n"
-            "   D=0, W=1, H=2, E0=3, E1=4, E2=5, E3=6\n"
+            "   D=0, W=1, H=2, E0=3 ... E9=12\n"
             "2. Batch-generate macros from Excel.\n"
             "3. Single-macro support—remains open after Generate.\n"
             "4. Use the template to get started.\n"
