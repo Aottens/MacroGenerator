@@ -771,6 +771,14 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
         dataframe = pd.read_excel(file_path, engine="openpyxl")
         logger.info("Rows loaded: %d", len(dataframe))
 
+        # Preserve user-entered values exactly for these workflow columns.
+        # We read from them during generation, but should not rewrite/normalize
+        # their original representation (e.g. true/false becoming 1/0).
+        preserved_columns: Dict[str, Any] = {}
+        for column_name in ("Min Max After Scale", "Save Workflow Enabled"):
+            if column_name in dataframe.columns:
+                preserved_columns[column_name] = dataframe[column_name].copy(deep=True)
+
         if "Error Message" not in dataframe.columns:
             dataframe["Error Message"] = ""
         else:
@@ -832,6 +840,9 @@ class MacroGeneratorApp(QtWidgets.QMainWindow):
                 dataframe.at[idx, "Error Message"] = str(exc)
                 error_count += 1
                 logger.exception("Row %d: failed", idx)
+
+        for column_name, original_values in preserved_columns.items():
+            dataframe[column_name] = original_values
 
         dataframe.to_excel(file_path, index=False, engine="openpyxl")
         output_txt = os.path.splitext(file_path)[0] + ".txt"
